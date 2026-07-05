@@ -4,8 +4,19 @@ const ctx = canvas.getContext('2d');
 // 画面のアスペクト比を9:16に保つ
 function resizeCanvas() {
     const container = document.getElementById('game-container');
-    canvas.width = container.clientWidth;
-    canvas.height = container.clientHeight;
+    
+    // コンテナのサイズを取得（CSSが効いていない場合は0になることがある）
+    let cw = container.clientWidth;
+    let ch = container.clientHeight;
+    
+    // 安全対策：サイズが0の場合はウィンドウサイズから計算する
+    if (cw === 0 || ch === 0) {
+        cw = Math.min(window.innerWidth, 450);
+        ch = Math.min(window.innerHeight, 800);
+    }
+    
+    canvas.width = cw;
+    canvas.height = ch;
 }
 window.addEventListener('resize', resizeCanvas);
 resizeCanvas();
@@ -20,9 +31,15 @@ class Boss {
         
         // 画像読み込み
         this.img = new Image();
-        this.img.src = 'assets/images/boss.png';
         this.imgLoaded = false;
+        this.imgError = false; // エラーフラグを追加
+        
         this.img.onload = () => { this.imgLoaded = true; };
+        this.img.onerror = () => { 
+            console.warn("ボスの画像が見つからねぇ！図形で代用するぞ！");
+            this.imgError = true; 
+        };
+        this.img.src = 'assets/images/boss.png';
     }
 
     reset() {
@@ -74,7 +91,7 @@ class Boss {
 
         // 本体描画
         ctx.save();
-        if (this.imgLoaded) {
+        if (this.imgLoaded && !this.imgError) {
             // 画像を円形にクリップ
             ctx.beginPath();
             ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
@@ -90,9 +107,9 @@ class Boss {
             ctx.lineWidth = 4;
             ctx.stroke();
             ctx.fillStyle = '#ffffff';
-            ctx.font = 'bold 12px sans-serif';
+            ctx.font = 'bold 14px sans-serif';
             ctx.textAlign = 'center';
-            ctx.fillText('局長', this.x, this.y + 4);
+            ctx.fillText('局長', this.x, this.y + 5);
         }
         ctx.restore();
     }
@@ -110,9 +127,11 @@ class Employee {
         this.stampScale = 0; // ハンコが押されたときのアニメーション用
 
         this.img = new Image();
-        this.img.src = 'assets/images/employee.png';
         this.imgLoaded = false;
+        this.imgError = false;
         this.img.onload = () => { this.imgLoaded = true; };
+        this.img.onerror = () => { this.imgError = true; };
+        this.img.src = 'assets/images/employee.png';
     }
 
     update() {
@@ -134,7 +153,7 @@ class Employee {
 
     draw() {
         ctx.save();
-        if (this.imgLoaded) {
+        if (this.imgLoaded && !this.imgError) {
             ctx.drawImage(this.img, this.x - this.radius, this.y - this.radius, this.radius * 2, this.radius * 2);
         } else {
             // フォールバック（悲哀の青い球体）
@@ -143,9 +162,9 @@ class Employee {
             ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
             ctx.fill();
             ctx.fillStyle = '#ffffff';
-            ctx.font = 'bold 10px sans-serif';
+            ctx.font = 'bold 12px sans-serif';
             ctx.textAlign = 'center';
-            ctx.fillText('社員', this.x, this.y + 3);
+            ctx.fillText('社員', this.x, this.y + 4);
         }
 
         // 強制残業「始末書ハンコ」エフェクト
@@ -161,9 +180,9 @@ class Employee {
 
             // 「残業」の文字刻印
             ctx.fillStyle = '#ef4444';
-            ctx.font = 'black 14px sans-serif';
+            ctx.font = '900 16px sans-serif';
             ctx.textAlign = 'center';
-            ctx.fillText('残業', this.x, this.y + 5);
+            ctx.fillText('残業', this.x, this.y + 6);
         }
         ctx.restore();
     }
@@ -203,7 +222,7 @@ class Desk {
 
 const gameState = {
     running: false,
-    boss: new Boss(),
+    boss: null, // 初期化時に生成する
     employees: [],
     desks: [],
     stampedCount: 0,
@@ -219,7 +238,7 @@ const gameState = {
 
 // ステージ初期化
 function initStage() {
-    gameState.boss.reset();
+    gameState.boss = new Boss();
     gameState.employees = [];
     gameState.desks = [
         new Desk(40, 220, 100, 45),
@@ -252,12 +271,14 @@ function updateGame() {
     gameState.boss.update();
 
     // 局長（ボス）とオフィス境界の衝突
-    Physics.checkWallCollision(gameState.boss, canvas.width, canvas.height);
-
-    // 局長（ボス）とデスクの衝突
-    gameState.desks.forEach(desk => {
-        Physics.resolveObstacleCollision(gameState.boss, desk);
-    });
+    if(typeof Physics !== 'undefined') {
+        Physics.checkWallCollision(gameState.boss, canvas.width, canvas.height);
+        
+        // 局長（ボス）とデスクの衝突
+        gameState.desks.forEach(desk => {
+            Physics.resolveObstacleCollision(gameState.boss, desk);
+        });
+    }
 
     // 社員（ザコ）たちの更新
     for (let i = gameState.employees.length - 1; i >= 0; i--) {
@@ -278,12 +299,12 @@ function updateGame() {
         }
 
         // 局長との体当たり判定（決裁完了！）
-        if (!emp.isStamped && Physics.checkCircleCollision(gameState.boss, emp)) {
+        if (typeof Physics !== 'undefined' && !emp.isStamped && Physics.checkCircleCollision(gameState.boss, emp)) {
             emp.isStamped = true;
             gameState.stampedCount++;
             gameState.currentCombo++;
             document.getElementById('stamped-count').innerText = gameState.stampedCount;
-            audio.playStamp(gameState.currentCombo);
+            if(typeof audio !== 'undefined') audio.playStamp(gameState.currentCombo);
 
             // 一定時間後に消滅させ、新しい社員をオフィス下部から補充
             setTimeout(() => {
@@ -363,10 +384,10 @@ function drawGame() {
     gameState.employees.forEach(emp => emp.draw());
 
     // 5. 局長（プレイヤー）描画
-    gameState.boss.draw();
+    if(gameState.boss) gameState.boss.draw();
 
     // 6. 引っ張りガイドライン描画
-    if (gameState.isDragging && !gameState.boss.isMoving) {
+    if (gameState.isDragging && gameState.boss && !gameState.boss.isMoving) {
         const dx = gameState.dragStart.x - gameState.dragCurrent.x;
         const dy = gameState.dragStart.y - gameState.dragCurrent.y;
         const dist = Math.sqrt(dx * dx + dy * dy);
@@ -431,7 +452,7 @@ function setupInput() {
     };
 
     const onStart = (e) => {
-        if (!gameState.running || gameState.boss.isMoving) return;
+        if (!gameState.running || !gameState.boss || gameState.boss.isMoving) return;
         const pos = getPos(e);
         
         // ダブルタップ判定（手榴弾ボム発動！）
@@ -471,7 +492,7 @@ function setupInput() {
             gameState.boss.isMoving = true;
 
             // 射出と同時に俺様の爆音ボイスを轟かせる
-            audio.playVoice();
+            if(typeof audio !== 'undefined') audio.playVoice();
         }
     };
 
@@ -488,7 +509,7 @@ function setupInput() {
 
 // 必殺技：手榴弾ボムの起爆
 function triggerBomb() {
-    audio.playBomb();
+    if(typeof audio !== 'undefined') audio.playBomb();
     
     // 画面中央に派手な爆発エフェクトを発生させ、全社員にハンコを押し付ける
     gameState.employees.forEach(emp => {
@@ -508,8 +529,12 @@ function triggerBomb() {
 // ==================== ゲームフロー制御 ====================
 
 function startGame() {
-    audio.unlock();
-    audio.playBGM();
+    if(typeof audio !== 'undefined') {
+        audio.unlock();
+        audio.playBGM();
+    } else {
+        console.warn("audio.js が読み込めていないか、エラーが起きているぞ！");
+    }
 
     document.getElementById('start-screen').classList.add('hidden');
     document.getElementById('result-screen').classList.add('hidden');
@@ -523,7 +548,7 @@ function startGame() {
 
 function endGame(isClear) {
     gameState.running = false;
-    audio.stopBGM();
+    if(typeof audio !== 'undefined') audio.stopBGM();
 
     document.getElementById('play-ui').classList.add('hidden');
     const resultScreen = document.getElementById('result-screen');
@@ -545,6 +570,10 @@ function endGame(isClear) {
         desc.innerText = "平社員どもが定時にオフィスを脱出し、家に帰ってしまった。 労働基準法を許した局長は始末書ものだ！";
     }
 }
+
+// 初期化（開始画面の描画等）
+initStage(); // Canvasに初期状態を描画するために一度呼ぶ
+drawGame();
 
 // ボタンイベントの登録
 document.getElementById('start-btn').addEventListener('click', startGame);
