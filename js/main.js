@@ -1,49 +1,62 @@
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 
-// 画像アセットの準備
-const bossImg = new Image();
-let bossImgLoaded = false;
-bossImg.onload = () => { bossImgLoaded = true; };
-bossImg.src = 'assets/images/boss.png';
+// 論理サイズを固定（物理演算の安定化のため）
+const LOGICAL_WIDTH = 450;
+const LOGICAL_HEIGHT = 800;
+canvas.width = LOGICAL_WIDTH;
+canvas.height = LOGICAL_HEIGHT;
 
-const empImg = new Image();
-let empImgLoaded = false;
-empImg.onload = () => { empImgLoaded = true; };
-empImg.src = 'assets/images/employee.png';
+// ==================== リッチ描画システム ====================
 
-// 演出用
-const camera = { x: 0, y: 0, shakeTime: 0, shakeIntensity: 0 };
-let particles = [];
+// 背景の描画（夜のオフィス街）
+function drawBackground() {
+    // 空のグラデーション
+    const grad = ctx.createLinearGradient(0, 0, 0, LOGICAL_HEIGHT);
+    grad.addColorStop(0, '#0f172a'); // 濃い紺色
+    grad.addColorStop(1, '#334155'); // 少し明るいグレーブルー
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, LOGICAL_WIDTH, LOGICAL_HEIGHT);
 
-function shakeScreen(intensity, time) {
-    camera.shakeIntensity = intensity;
-    camera.shakeTime = time;
-}
+    // 遠景のビル群シルエット
+    ctx.fillStyle = '#1e293b';
+    ctx.fillRect(50, 400, 80, 400);
+    ctx.fillRect(150, 300, 100, 500);
+    ctx.fillRect(280, 450, 90, 350);
+    ctx.fillRect(380, 250, 70, 550);
 
-class Particle {
-    constructor(x, y) {
-        this.x = x; this.y = y;
-        this.vx = (Math.random() - 0.5) * 12;
-        this.vy = (Math.random() - 0.5) * 12;
-        this.size = Math.random() * 5 + 2;
-        this.life = 1.0;
-    }
-    update() {
-        this.x += this.vx; this.y += this.vy;
-        this.life -= 0.04;
-    }
-    draw() {
-        ctx.save();
-        ctx.globalAlpha = Math.max(this.life, 0);
-        ctx.fillStyle = '#ef4444';
-        ctx.fillRect(this.x, this.y, this.size, this.size);
-        ctx.restore();
+    // ビルの窓の明かり
+    ctx.fillStyle = 'rgba(250, 204, 21, 0.4)';
+    for(let i=160; i<240; i+=25) {
+        for(let j=320; j<700; j+=30) {
+            if(Math.random() > 0.3) ctx.fillRect(i, j, 10, 15);
+        }
     }
 }
 
-function spawnParticles(x, y, count) {
-    for(let i=0; i<count; i++) particles.push(new Particle(x, y));
+// 木箱（障害物）の描画
+function drawWoodenCrate(x, y, w, h, angle) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(angle);
+    
+    // ベースの色
+    ctx.fillStyle = '#b45309'; // 木の色
+    ctx.fillRect(-w/2, -h/2, w, h);
+    
+    // 枠線
+    ctx.strokeStyle = '#78350f'; // 濃い茶色
+    ctx.lineWidth = 4;
+    ctx.strokeRect(-w/2, -h/2, w, h);
+    
+    // 木目・補強線の描画
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(-w/2, -h/2); ctx.lineTo(w/2, h/2);
+    ctx.moveTo(w/2, -h/2); ctx.lineTo(-w/2, h/2);
+    ctx.stroke();
+
+    ctx.restore();
 }
 
 // ==================== ゲーム・物理エンジン管理 ====================
@@ -53,43 +66,15 @@ const gameState = {
     engine: null,
     world: null,
     runner: null,
-    mouseConstraint: null,
     bossBody: null,
-    sling: null,
     enemies: [],
     shotsLeft: 3,
-    state: 'idle', // idle, flying, gameover
-    doubleTapTimer: 0,
-    bombUsed: false // 手榴弾は1発射につき1回
+    state: 'idle', // idle(待機), dragging(引っ張り中), flying(飛行中)
+    anchor: { x: LOGICAL_WIDTH / 2, y: 650 }, // 発射台の位置
+    dragPos: { x: 0, y: 0 }
 };
 
-// ステージの塔を構築する
-function buildStage(cx, cy) {
-    const blockOpts = { label: 'block', friction: 0.5, restitution: 0.1, density: 0.005 };
-    const empOpts = { label: 'employee', restitution: 0.4, friction: 0.5, density: 0.002 };
-
-    // 書類の束（ブロック）と社員（敵）をピラミッド状に積む
-    Composite.add(gameState.world, [
-        Bodies.rectangle(cx - 50, cy, 20, 50, blockOpts),
-        Bodies.rectangle(cx + 50, cy, 20, 50, blockOpts),
-        Bodies.rectangle(cx, cy - 35, 140, 15, blockOpts), // 板
-        
-        Bodies.rectangle(cx - 30, cy - 70, 20, 50, blockOpts),
-        Bodies.rectangle(cx + 30, cy - 70, 20, 50, blockOpts),
-        Bodies.rectangle(cx, cy - 105, 100, 15, blockOpts), // 板
-        
-        Bodies.rectangle(cx, cy - 140, 20, 50, blockOpts)
-    ]);
-
-    // 社員を各階層に配置
-    const e1 = Bodies.circle(cx, cy + 10, 18, empOpts);
-    const e2 = Bodies.circle(cx, cy - 60, 18, empOpts);
-    const e3 = Bodies.circle(cx, cy - 130, 18, empOpts);
-    
-    gameState.enemies.push(e1, e2, e3);
-    Composite.add(gameState.world, [e1, e2, e3]);
-}
-
+// 物理エンジンの初期化
 function initMatter() {
     if (gameState.engine) {
         Runner.stop(gameState.runner);
@@ -98,319 +83,301 @@ function initMatter() {
     
     gameState.engine = Engine.create();
     gameState.world = gameState.engine.world;
-    gameState.engine.gravity.y = 1.2; // アングリーバード風の少し強めの重力
+    gameState.engine.gravity.y = 1.0; // 重力
 
-    const w = 450;
-    const h = 800;
-
-    // 床・壁・天井（見えない壁）
-    const wallOpts = { isStatic: true, render: { visible: false } };
+    // 床・壁の作成（透明な枠）
+    const wallOpts = { isStatic: true, friction: 0.5, restitution: 0.2 };
     Composite.add(gameState.world, [
-        Bodies.rectangle(w/2, h + 25, w + 100, 50, wallOpts), // 床
-        Bodies.rectangle(-25, h/2, 50, h * 2, wallOpts),      // 左壁
-        Bodies.rectangle(w + 25, h/2, 50, h * 2, wallOpts),   // 右壁
-        Bodies.rectangle(w/2, -500, w * 2, 50, wallOpts)      // 天井
+        Bodies.rectangle(LOGICAL_WIDTH/2, LOGICAL_HEIGHT + 25, LOGICAL_WIDTH + 100, 50, wallOpts), // 床
+        Bodies.rectangle(-25, LOGICAL_HEIGHT/2, 50, LOGICAL_HEIGHT * 2, wallOpts), // 左壁
+        Bodies.rectangle(LOGICAL_WIDTH + 25, LOGICAL_HEIGHT/2, 50, LOGICAL_HEIGHT * 2, wallOpts) // 右壁
     ]);
 
-    // 空中の足場（デスク）
+    // 発射台（スリングショットの土台）
     Composite.add(gameState.world, [
-        Bodies.rectangle(w/2, 350, 200, 20, { isStatic: true, label: 'desk' }), // 中央の棚
-        Bodies.rectangle(80, 550, 150, 20, { isStatic: true, label: 'desk' }),  // 左の棚
-        Bodies.rectangle(w - 80, 200, 150, 20, { isStatic: true, label: 'desk' }) // 右の棚
+        Bodies.rectangle(LOGICAL_WIDTH/2, 725, 40, 150, { isStatic: true, label: 'slingshot_base' })
     ]);
 
-    // 足場の上に塔を建てる
-    buildStage(w/2, 320);
-    buildStage(80, 520);
+    // ステージ構築（木箱と社員の塔）
+    buildStage(LOGICAL_WIDTH / 2, 550);
 
-    // マウスコントロール（スリングショット用）
-    const mouse = Mouse.create(canvas);
-    // スケール対応：画面のCSSサイズとCanvasの論理サイズ(450x800)のズレを補正
-    const container = document.getElementById('game-container');
-    const scaleX = 450 / container.clientWidth;
-    const scaleY = 800 / container.clientHeight;
-    Mouse.setScale(mouse, { x: scaleX, y: scaleY });
-
-    gameState.mouseConstraint = MouseConstraint.create(gameState.engine, {
-        mouse: mouse,
-        constraint: { stiffness: 0.1, render: { visible: false } }
-    });
-    Composite.add(gameState.world, gameState.mouseConstraint);
-
-    // 引っ張って離した時のイベント（発射！）
-    Events.on(gameState.mouseConstraint, 'enddrag', function(e) {
-        if (gameState.sling && gameState.sling.bodyB === gameState.bossBody) {
-            const dist = Vector.magnitude(Vector.sub(gameState.bossBody.position, gameState.sling.pointA));
-            if (dist > 20) { // 一定以上引っ張られていたら発射
-                gameState.sling.bodyB = null; 
-                gameState.state = 'flying';
-                if(typeof audio !== 'undefined' && audio) audio.playShoot();
-                
-                gameState.shotsLeft--;
-                document.getElementById('shots-count').innerText = gameState.shotsLeft;
-                
-                // 4秒後に次の弾（局長）を装填するか、ゲーム終了判定
-                setTimeout(() => {
-                    if (gameState.enemies.length > 0 && gameState.shotsLeft > 0) {
-                        loadBoss();
-                    } else if (gameState.enemies.length > 0 && gameState.shotsLeft <= 0) {
-                        endGame(false); // 弾切れ
-                    }
-                }, 4000);
-            }
-        }
-    });
-
-    // 衝突時のダメージ判定（敵を倒す）
+    // 衝突イベント（ダメージ判定）
     Events.on(gameState.engine, 'collisionStart', function(event) {
-        const pairs = event.pairs;
-        for (let i = 0; i < pairs.length; i++) {
-            const bodyA = pairs[i].bodyA;
-            const bodyB = pairs[i].bodyB;
-
-            // 相対的な衝撃の強さを簡易計算
+        event.pairs.forEach(pair => {
+            const bodyA = pair.bodyA;
+            const bodyB = pair.bodyB;
             const relVel = Vector.magnitude(Vector.sub(bodyA.velocity, bodyB.velocity));
 
-            if (relVel > 2 && typeof audio !== 'undefined' && audio) {
-                audio.playBounce(); // ぶつかる音
+            // 一定以上の衝撃で敵を倒す
+            if (relVel > 3) {
+                if (bodyA.label === 'employee') killEnemy(bodyA);
+                if (bodyB.label === 'employee') killEnemy(bodyB);
+                
+                // 木箱の破壊音
+                if ((bodyA.label === 'block' || bodyB.label === 'block') && typeof audio !== 'undefined' && audio.playBounce) {
+                    audio.playBounce();
+                }
             }
-
-            // 一定以上の衝撃が社員に加わったら撃破！
-            if (bodyA.label === 'employee' && relVel > 4) killEnemy(bodyA);
-            if (bodyB.label === 'employee' && relVel > 4) killEnemy(bodyB);
-        }
+        });
     });
 
     gameState.runner = Runner.create();
     Runner.run(gameState.runner, gameState.engine);
 }
 
-// 局長（弾）をパチンコにセットする
+// 塔の構築
+function buildStage(cx, cy) {
+    const blockOpts = { label: 'block', friction: 0.8, restitution: 0.1, density: 0.005 };
+    const empOpts = { label: 'employee', restitution: 0.4, friction: 0.5, density: 0.002 };
+
+    // 木箱
+    Composite.add(gameState.world, [
+        Bodies.rectangle(cx - 60, cy, 30, 80, blockOpts),
+        Bodies.rectangle(cx + 60, cy, 30, 80, blockOpts),
+        Bodies.rectangle(cx, cy - 50, 180, 20, blockOpts), // 1階の天井
+        
+        Bodies.rectangle(cx - 30, cy - 90, 30, 60, blockOpts),
+        Bodies.rectangle(cx + 30, cy - 90, 30, 60, blockOpts),
+        Bodies.rectangle(cx, cy - 130, 100, 20, blockOpts) // 2階の天井
+    ]);
+
+    // 敵（社員）
+    const e1 = Bodies.circle(cx, cy + 10, 20, empOpts); // 1階
+    const e2 = Bodies.circle(cx, cy - 80, 20, empOpts); // 2階
+    const e3 = Bodies.circle(cx, cy - 160, 20, empOpts); // 屋上
+    
+    gameState.enemies.push(e1, e2, e3);
+    Composite.add(gameState.world, [e1, e2, e3]);
+}
+
+// ボス（弾）のセット
 function loadBoss() {
-    if (gameState.bossBody) {
-        Composite.remove(gameState.world, gameState.bossBody);
-    }
-    const anchor = { x: 450 / 2, y: 700 }; // 画面下部中央
+    if (gameState.bossBody) Composite.remove(gameState.world, gameState.bossBody);
     
-    gameState.bossBody = Bodies.circle(anchor.x, anchor.y, 22, { 
+    // ドラッグ中は重力の影響を受けないように isStatic を一時的に true にする
+    gameState.bossBody = Bodies.circle(gameState.anchor.x, gameState.anchor.y, 22, { 
         label: 'boss', 
-        restitution: 0.6, // よく弾む
-        density: 0.05     // 重くして破壊力アップ
+        restitution: 0.5, 
+        density: 0.02,
+        isStatic: true 
     });
-    
-    if (!gameState.sling) {
-        gameState.sling = Constraint.create({
-            pointA: anchor,
-            bodyB: gameState.bossBody,
-            stiffness: 0.03, // ゴムの伸びやすさ
-            damping: 0.01,
-            length: 10
-        });
-        Composite.add(gameState.world, gameState.sling);
-    } else {
-        gameState.sling.bodyB = gameState.bossBody;
-    }
     
     Composite.add(gameState.world, gameState.bossBody);
     gameState.state = 'idle';
-    gameState.bombUsed = false;
 }
 
-// 敵を倒した時の処理
 function killEnemy(body) {
     if (gameState.enemies.includes(body)) {
         gameState.enemies = gameState.enemies.filter(e => e !== body);
         Composite.remove(gameState.world, body);
         
-        spawnParticles(body.position.x, body.position.y, 20);
-        shakeScreen(8, 10);
-        if(typeof audio !== 'undefined' && audio) audio.playStamp(5 - gameState.enemies.length);
-        
         document.getElementById('escaped-count').innerText = gameState.enemies.length;
+        if(typeof audio !== 'undefined' && audio.playStamp) audio.playStamp();
 
-        // 敵が全滅したらクリア！
+        // 敵が全滅したら少し待ってクリア画面へ
         if (gameState.enemies.length <= 0) {
             setTimeout(() => endGame(true), 1500);
         }
     }
 }
 
-// 手榴弾ボム（ダブルタップで物理爆発）
-function triggerBomb() {
-    if (gameState.state !== 'flying' || gameState.bombUsed || !gameState.bossBody) return;
-    gameState.bombUsed = true;
-    
-    if(typeof audio !== 'undefined' && audio) audio.playBomb();
-    shakeScreen(20, 20); 
-    spawnParticles(gameState.bossBody.position.x, gameState.bossBody.position.y, 40);
-    
-    // 局長の周囲のBodyに爆発の力（衝撃波）を加える
-    const allBodies = Composite.allBodies(gameState.world);
-    allBodies.forEach(b => {
-        if (b.isStatic || b === gameState.bossBody) return;
-        const dx = b.position.x - gameState.bossBody.position.x;
-        const dy = b.position.y - gameState.bossBody.position.y;
-        const dist = Math.sqrt(dx*dx + dy*dy);
-        if (dist < 180) { // 爆発の及ぶ範囲
-            const forceMag = 0.1 * (180 - dist) / 180; // 近いほど強い
-            Matter.Body.applyForce(b, b.position, { x: (dx/dist)*forceMag, y: (dy/dist)*forceMag });
-            
-            // 敵が爆風に巻き込まれたら撃破
-            if (b.label === 'employee') killEnemy(b);
-        }
-    });
+// ==================== ドラッグ（引っ張り）操作の完全自作 ====================
 
-    const originalBg = canvas.style.backgroundColor;
-    canvas.style.backgroundColor = '#ffffff';
-    setTimeout(() => { canvas.style.backgroundColor = originalBg; }, 100);
-}
-
-// ==================== 描画ループ ====================
-
-function drawGame() {
-    ctx.save();
-    
-    // カメラ揺れ
-    if (camera.shakeTime > 0) {
-        camera.shakeTime--;
-        camera.x = (Math.random() - 0.5) * camera.shakeIntensity;
-        camera.y = (Math.random() - 0.5) * camera.shakeIntensity;
-        ctx.translate(camera.x, camera.y);
-    }
-
-    // 背景
-    ctx.fillStyle = '#1e293b';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    if (!gameState.world) { ctx.restore(); return; }
-
-    // スリングショットのゴム（後ろ側）描画
-    if (gameState.sling && gameState.sling.bodyB) {
-        ctx.beginPath();
-        ctx.moveTo(gameState.sling.pointA.x - 20, gameState.sling.pointA.y);
-        ctx.lineTo(gameState.bossBody.position.x, gameState.bossBody.position.y);
-        ctx.strokeStyle = '#334155';
-        ctx.lineWidth = 6;
-        ctx.stroke();
-    }
-
-    // Matter.js の全Bodyを描画にマッピング
-    const bodies = Composite.allBodies(gameState.world);
-    bodies.forEach(body => {
-        ctx.save();
-        ctx.translate(body.position.x, body.position.y);
-        ctx.rotate(body.angle);
-
-        if (body.label === 'boss') {
-            if (bossImgLoaded) {
-                ctx.drawImage(bossImg, -body.circleRadius, -body.circleRadius, body.circleRadius*2, body.circleRadius*2);
-            } else {
-                ctx.fillStyle = '#ef4444';
-                ctx.beginPath(); ctx.arc(0,0,body.circleRadius,0,Math.PI*2); ctx.fill();
-            }
-            // ボムが使える時はオーラをまとう
-            if (gameState.state === 'flying' && !gameState.bombUsed) {
-                ctx.strokeStyle = 'rgba(250, 204, 21, 0.6)';
-                ctx.lineWidth = 4;
-                ctx.beginPath(); ctx.arc(0,0,body.circleRadius + 5 + Math.sin(Date.now()/50)*3, 0, Math.PI*2); ctx.stroke();
-            }
-        } 
-        else if (body.label === 'employee') {
-            if (empImgLoaded) {
-                ctx.drawImage(empImg, -body.circleRadius, -body.circleRadius, body.circleRadius*2, body.circleRadius*2);
-            } else {
-                ctx.fillStyle = '#3b82f6';
-                ctx.beginPath(); ctx.arc(0,0,body.circleRadius,0,Math.PI*2); ctx.fill();
-            }
-        }
-        else if (body.label === 'block') {
-            const w = body.bounds.max.x - body.bounds.min.x;
-            const h = body.bounds.max.y - body.bounds.min.y;
-            ctx.fillStyle = '#cbd5e1';
-            ctx.strokeStyle = '#64748b';
-            ctx.lineWidth = 2;
-            ctx.fillRect(-w/2, -h/2, w, h);
-            ctx.strokeRect(-w/2, -h/2, w, h);
-            // 書類っぽい線
-            ctx.beginPath(); ctx.moveTo(-w/3, -h/4); ctx.lineTo(w/3, -h/4); ctx.stroke();
-            ctx.beginPath(); ctx.moveTo(-w/3, 0); ctx.lineTo(w/3, 0); ctx.stroke();
-        }
-        else if (body.label === 'desk') {
-            const w = body.bounds.max.x - body.bounds.min.x;
-            const h = body.bounds.max.y - body.bounds.min.y;
-            ctx.fillStyle = '#475569';
-            ctx.fillRect(-w/2, -h/2, w, h);
-            ctx.fillStyle = '#94a3b8';
-            ctx.fillRect(-w/2, -h/2, w, 4); // デスクのフチ
-        }
-        ctx.restore();
-    });
-
-    // スリングショットのゴム（前側）描画
-    if (gameState.sling && gameState.sling.bodyB) {
-        ctx.beginPath();
-        ctx.moveTo(gameState.bossBody.position.x, gameState.bossBody.position.y);
-        ctx.lineTo(gameState.sling.pointA.x + 20, gameState.sling.pointA.y);
-        ctx.strokeStyle = '#ef4444';
-        ctx.lineWidth = 4;
-        ctx.stroke();
-    }
-
-    // パーティクルの更新と描画
-    for (let i = particles.length - 1; i >= 0; i--) {
-        const p = particles[i];
-        p.update();
-        p.draw();
-        if (p.life <= 0) particles.splice(i, 1);
-    }
-
-    ctx.restore(); // カメラ揺れリセット
-}
-
-function gameLoop() {
-    drawGame();
-    if (gameState.running) {
-        requestAnimationFrame(gameLoop);
-    }
-}
-
-// ダブルタップの検知
 let isInputSetup = false;
 function setupInput() {
     if (isInputSetup) return;
     isInputSetup = true;
 
-    const onStart = (e) => {
-        if (!gameState.running) return;
+    // CSSのサイズ変更に影響されない正確な座標取得
+    const getPos = (e) => {
+        const rect = canvas.getBoundingClientRect();
+        const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+        const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+        const scaleX = LOGICAL_WIDTH / rect.width;
+        const scaleY = LOGICAL_HEIGHT / rect.height;
+        return {
+            x: (clientX - rect.left) * scaleX,
+            y: (clientY - rect.top) * scaleY
+        };
+    };
+
+    const onPointerDown = (e) => {
+        if (gameState.state !== 'idle' || !gameState.bossBody) return;
+        const pos = getPos(e);
         
-        // 空中飛行中のダブルタップで手榴弾発動
-        if (gameState.state === 'flying' && !gameState.bombUsed) {
-            if (gameState.doubleTapTimer > 0) {
-                triggerBomb();
-                gameState.doubleTapTimer = 0;
-            } else {
-                gameState.doubleTapTimer = 300; // 300ms以内に2回目でボム
-            }
+        // ボスとの距離を計算（当たり判定を広めにとる）
+        const dx = pos.x - gameState.bossBody.position.x;
+        const dy = pos.y - gameState.bossBody.position.y;
+        if (Math.sqrt(dx*dx + dy*dy) < 50) {
+            gameState.state = 'dragging';
+            gameState.dragPos = pos;
         }
     };
 
-    // スマホタッチとマウスクリックの両方でボム発動を拾う
-    canvas.addEventListener('touchstart', (e) => { onStart(e); }, { passive: false });
-    canvas.addEventListener('mousedown', onStart);
+    const onPointerMove = (e) => {
+        if (gameState.state !== 'dragging') return;
+        const pos = getPos(e);
+        
+        // 引っ張れる最大距離を制限
+        const maxDrag = 120;
+        const dx = pos.x - gameState.anchor.x;
+        const dy = pos.y - gameState.anchor.y;
+        const dist = Math.sqrt(dx*dx + dy*dy);
+        
+        if (dist > maxDrag) {
+            gameState.dragPos = {
+                x: gameState.anchor.x + (dx / dist) * maxDrag,
+                y: gameState.anchor.y + (dy / dist) * maxDrag
+            };
+        } else {
+            gameState.dragPos = pos;
+        }
+        
+        // ボスの位置を手動で強制更新
+        Matter.Body.setPosition(gameState.bossBody, gameState.dragPos);
+    };
+
+    const onPointerUp = (e) => {
+        if (gameState.state !== 'dragging') return;
+        
+        const dx = gameState.anchor.x - gameState.bossBody.position.x;
+        const dy = gameState.anchor.y - gameState.bossBody.position.y;
+        const dist = Math.sqrt(dx*dx + dy*dy);
+
+        // 少しでも引っ張られていたら発射
+        if (dist > 10) {
+            gameState.state = 'flying';
+            
+            // 物理挙動を有効化（固定解除）
+            Matter.Body.setStatic(gameState.bossBody, false);
+            
+            // 引っ張った量に応じた力を加える（アングリーバードの挙動）
+            const forceMultiplier = 0.00035; 
+            Matter.Body.applyForce(gameState.bossBody, gameState.bossBody.position, {
+                x: dx * forceMultiplier,
+                y: dy * forceMultiplier
+            });
+
+            if(typeof audio !== 'undefined' && audio.playShoot) audio.playShoot();
+
+            gameState.shotsLeft--;
+            document.getElementById('shots-count').innerText = gameState.shotsLeft;
+
+            // 弾切れ・次弾装填チェック
+            setTimeout(() => {
+                if (gameState.enemies.length > 0) {
+                    if (gameState.shotsLeft > 0) {
+                        loadBoss();
+                    } else {
+                        endGame(false);
+                    }
+                }
+            }, 5000); // 5秒後に次をセット
+        } else {
+            // 引っ張りが弱ければ元に戻す
+            Matter.Body.setPosition(gameState.bossBody, gameState.anchor);
+            gameState.state = 'idle';
+        }
+    };
+
+    canvas.addEventListener('touchstart', (e) => { e.preventDefault(); onPointerDown(e); }, { passive: false });
+    canvas.addEventListener('touchmove', (e) => { e.preventDefault(); onPointerMove(e); }, { passive: false });
+    canvas.addEventListener('touchend', (e) => { e.preventDefault(); onPointerUp(e); }, { passive: false });
     
-    // タイマー減衰ループ
-    setInterval(() => {
-        if(gameState.doubleTapTimer > 0) gameState.doubleTapTimer -= 50;
-    }, 50);
+    canvas.addEventListener('mousedown', onPointerDown);
+    canvas.addEventListener('mousemove', onPointerMove);
+    window.addEventListener('mouseup', onPointerUp);
+}
+
+// ==================== メイン描画ループ ====================
+
+function drawGame() {
+    ctx.clearRect(0, 0, LOGICAL_WIDTH, LOGICAL_HEIGHT);
+
+    // 1. リッチな背景
+    drawBackground();
+
+    if (!gameState.world) return;
+
+    // 2. スリングショットの奥のゴム
+    if (gameState.state === 'dragging') {
+        ctx.beginPath();
+        ctx.moveTo(gameState.anchor.x - 20, gameState.anchor.y);
+        ctx.lineTo(gameState.bossBody.position.x, gameState.bossBody.position.y);
+        ctx.strokeStyle = '#1e293b'; // 暗いゴム色
+        ctx.lineWidth = 6;
+        ctx.stroke();
+    }
+
+    // 3. 物理オブジェクトの描画
+    const bodies = Composite.allBodies(gameState.world);
+    bodies.forEach(body => {
+        if (body.label === 'slingshot_base') {
+            // パチンコの支柱
+            ctx.fillStyle = '#78350f';
+            ctx.fillRect(body.bounds.min.x, body.bounds.min.y, body.bounds.max.x - body.bounds.min.x, body.bounds.max.y - body.bounds.min.y);
+        }
+        else if (body.label === 'block') {
+            const w = body.bounds.max.x - body.bounds.min.x;
+            const h = body.bounds.max.y - body.bounds.min.y;
+            drawWoodenCrate(body.position.x, body.position.y, w, h, body.angle);
+        }
+        else if (body.label === 'employee') {
+            ctx.save();
+            ctx.translate(body.position.x, body.position.y);
+            ctx.rotate(body.angle);
+            // 体
+            ctx.fillStyle = '#3b82f6';
+            ctx.beginPath(); ctx.arc(0, 0, body.circleRadius, 0, Math.PI * 2); ctx.fill();
+            // 絵文字で顔を描画（画像がなくても高クオリティ）
+            ctx.font = '24px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('😨', 0, 0);
+            ctx.restore();
+        }
+        else if (body.label === 'boss') {
+            ctx.save();
+            ctx.translate(body.position.x, body.position.y);
+            ctx.rotate(body.angle);
+            // 体
+            ctx.fillStyle = '#ef4444';
+            ctx.beginPath(); ctx.arc(0, 0, body.circleRadius, 0, Math.PI * 2); ctx.fill();
+            // 絵文字で顔
+            ctx.font = '28px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('😡', 0, 0);
+            ctx.restore();
+        }
+    });
+
+    // 4. スリングショットの手前のゴム
+    if (gameState.state === 'dragging') {
+        ctx.beginPath();
+        ctx.moveTo(gameState.bossBody.position.x, gameState.bossBody.position.y);
+        ctx.lineTo(gameState.anchor.x + 20, gameState.anchor.y);
+        ctx.strokeStyle = '#ef4444'; // 手前は赤っぽいゴム
+        ctx.lineWidth = 4;
+        ctx.stroke();
+    }
+}
+
+function gameLoop() {
+    if (gameState.running) {
+        drawGame();
+        requestAnimationFrame(gameLoop);
+    }
 }
 
 // ==================== ゲーム進行制御 ====================
 
 function startGame() {
-    if(typeof audio !== 'undefined') {
+    if(typeof audio !== 'undefined' && audio.unlock) {
         audio.unlock();
         audio.playBGM();
     }
+    
     document.getElementById('start-screen').classList.add('hidden');
     document.getElementById('result-screen').classList.add('hidden');
     document.getElementById('play-ui').classList.remove('hidden');
@@ -434,7 +401,7 @@ function endGame(isClear) {
     gameState.running = false;
     
     if (gameState.runner) Runner.stop(gameState.runner);
-    if(typeof audio !== 'undefined') audio.stopBGM();
+    if(typeof audio !== 'undefined' && audio.stopBGM) audio.stopBGM();
 
     document.getElementById('play-ui').classList.add('hidden');
     const resultScreen = document.getElementById('result-screen');
@@ -445,22 +412,20 @@ function endGame(isClear) {
 
     if (isClear) {
         title.innerText = "残業取締 完了！";
-        title.className = "text-4xl font-black text-yellow-400 mb-2 tracking-widest animate-bounce";
-        desc.innerText = "見事だ！ 物理法則をもねじ伏せ、全ての社員を定時退社から引き戻したぞ！";
+        title.className = "text-4xl font-black text-yellow-400 mb-2 tracking-widest";
+        desc.innerText = "見事だ！ 物理法則をもねじ伏せ、全ての社員を定時退社から引き戻した！";
     } else {
         title.innerText = "定時退社 発生";
         title.className = "text-4xl font-black text-red-500 mb-2 tracking-widest";
-        desc.innerText = "弾（局長）が尽きてしまった。社員どもは全員家に帰ってしまったぞ。始末書だ！";
+        desc.innerText = "弾（局長）が尽きてしまった。社員どもは全員家に帰ってしまったぞ。";
     }
 }
 
-// ボタンイベントの登録
+// 初期描画
+drawBackground();
+
 document.getElementById('start-btn').addEventListener('click', startGame);
 document.getElementById('restart-btn').addEventListener('click', () => {
     document.getElementById('result-screen').classList.add('hidden');
-    startGame(); // そのまま再出社
+    startGame(); 
 });
-
-// タイトル画面用の初回描画
-ctx.fillStyle = '#1e293b';
-ctx.fillRect(0, 0, canvas.width, canvas.height);
