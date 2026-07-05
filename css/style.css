@@ -9,16 +9,40 @@ html, body {
     -webkit-overflow-scrolling: touch;
     touch-action: none;
     font-family: 'Helvetica Neue', Arial, 'Hiragino Kaku Gothic ProN', sans-serif;
+    background-color: #0f172a; /* Tailwind bg-slate-900 の代用 */
+    display: flex;
+    justify-content: center;
+    align-items: center;
 }
 
-/* 仮想の安全なタッチエリアを設定 */
+/* ゲーム画面を確実に表示するためのベースレイアウト */
 #game-container {
-    user-select: none;
-    -webkit-user-select: none;
-    touch-action: none;
+    width: 100%;
+    max-width: 450px;
+    height: 100%;
+    max-height: 800px;
+    position: relative;
+    background-color: #1e293b; /* Tailwind bg-slate-800 の代用 */
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+    overflow: hidden;
 }
 
-/* 点滅アニメーション（ガイドライン等用） */
+/* Canvasのサイズをコンテナに100%追従させる */
+canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+    position: absolute;
+    top: 0;
+    left: 0;
+}
+
+/* UI表示/非表示の切り替え用クラス（Tailwindが効かなくても確実に消す） */
+.hidden {
+    display: none !important;
+}
+
+/* 点滅アニメーション */
 @keyframes pulse {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.4; }
