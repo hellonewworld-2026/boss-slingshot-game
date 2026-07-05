@@ -1,22 +1,20 @@
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 
-function resizeCanvas() {
-    const container = document.getElementById('game-container');
-    let cw = container.clientWidth;
-    let ch = container.clientHeight;
-    if (cw === 0 || ch === 0) {
-        cw = Math.min(window.innerWidth, 450);
-        ch = Math.min(window.innerHeight, 800);
-    }
-    canvas.width = cw;
-    canvas.height = ch;
-}
-window.addEventListener('resize', resizeCanvas);
-resizeCanvas();
+// 画像アセットの準備
+const bossImg = new Image();
+let bossImgLoaded = false;
+bossImg.onload = () => { bossImgLoaded = true; };
+bossImg.src = 'assets/images/boss.png';
 
-// ==================== 演出システム（カメラ揺れ・紙吹雪） ====================
+const empImg = new Image();
+let empImgLoaded = false;
+empImg.onload = () => { empImgLoaded = true; };
+empImg.src = 'assets/images/employee.png';
+
+// 演出用
 const camera = { x: 0, y: 0, shakeTime: 0, shakeIntensity: 0 };
+let particles = [];
 
 function shakeScreen(intensity, time) {
     camera.shakeIntensity = intensity;
@@ -24,530 +22,241 @@ function shakeScreen(intensity, time) {
 }
 
 class Particle {
-    constructor(x, y, color) {
-        this.x = x;
-        this.y = y;
-        this.vx = (Math.random() - 0.5) * 10;
-        this.vy = (Math.random() - 0.5) * 10;
-        this.size = Math.random() * 4 + 2;
+    constructor(x, y) {
+        this.x = x; this.y = y;
+        this.vx = (Math.random() - 0.5) * 12;
+        this.vy = (Math.random() - 0.5) * 12;
+        this.size = Math.random() * 5 + 2;
         this.life = 1.0;
-        this.color = color;
     }
     update() {
-        this.x += this.vx;
-        this.y += this.vy;
-        this.life -= 0.03;
+        this.x += this.vx; this.y += this.vy;
+        this.life -= 0.04;
     }
     draw() {
         ctx.save();
         ctx.globalAlpha = Math.max(this.life, 0);
-        ctx.fillStyle = this.color;
+        ctx.fillStyle = '#ef4444';
         ctx.fillRect(this.x, this.y, this.size, this.size);
         ctx.restore();
     }
 }
 
-// ==================== ゲーム内の各Entity ====================
-
-class Boss {
-    constructor() {
-        this.radius = 24; // 少し小さくしてスピード感アップ
-        this.reset();
-        this.img = new Image();
-        this.imgLoaded = false;
-        this.imgError = false;
-        this.img.onload = () => { this.imgLoaded = true; };
-        this.img.onerror = () => { this.imgError = true; };
-        this.img.src = 'assets/images/boss.png';
-    }
-
-    reset() {
-        this.x = canvas.width / 2;
-        this.y = canvas.height - 100;
-        this.vx = 0;
-        this.vy = 0;
-        this.rebound = 1.0; // 完全反射（減速しない！）
-        this.isMoving = false;
-        this.trail = [];
-    }
-
-    update() {
-        if (this.isMoving) {
-            this.x += this.vx;
-            this.y += this.vy;
-
-            // コンボが繋がるほど摩擦が減る（止まらない）
-            const friction = Math.max(0.97, 0.99 - (gameState.currentCombo * 0.002));
-            this.vx *= friction;
-            this.vy *= friction;
-
-            this.trail.push({ x: this.x, y: this.y });
-            if (this.trail.length > 10) this.trail.shift();
-
-            const speed = Math.sqrt(this.vx * this.vx + this.vy * this.vy);
-            if (speed < 0.5) {
-                this.vx = 0;
-                this.vy = 0;
-                this.isMoving = false;
-                this.trail = [];
-                gameState.currentCombo = 0;
-            }
-        }
-    }
-
-    draw() {
-        // コンボによるオーラ（威圧感）エフェクト
-        if (gameState.currentCombo > 0) {
-            ctx.save();
-            ctx.beginPath();
-            ctx.arc(this.x, this.y, this.radius + 10 + Math.sin(Date.now()/50)*5, 0, Math.PI*2);
-            ctx.fillStyle = `rgba(239, 68, 68, ${Math.min(gameState.currentCombo * 0.1, 0.5)})`;
-            ctx.fill();
-            ctx.restore();
-        }
-
-        this.trail.forEach((t, index) => {
-            ctx.save();
-            ctx.globalAlpha = (index / this.trail.length) * 0.3;
-            ctx.fillStyle = '#ef4444';
-            ctx.beginPath();
-            ctx.arc(t.x, t.y, this.radius, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.restore();
-        });
-
-        ctx.save();
-        if (this.imgLoaded && !this.imgError) {
-            ctx.beginPath();
-            ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
-            ctx.clip();
-            ctx.drawImage(this.img, this.x - this.radius, this.y - this.radius, this.radius * 2, this.radius * 2);
-        } else {
-            ctx.fillStyle = '#ef4444';
-            ctx.beginPath();
-            ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.fillStyle = '#ffffff';
-            ctx.font = 'bold 12px sans-serif';
-            ctx.textAlign = 'center';
-            ctx.fillText('ボス', this.x, this.y + 4);
-        }
-        ctx.restore();
-    }
+function spawnParticles(x, y, count) {
+    for(let i=0; i<count; i++) particles.push(new Particle(x, y));
 }
 
-class Employee {
-    constructor(type = 'normal') {
-        this.radius = 18;
-        this.x = Math.random() * (canvas.width - 60) + 30;
-        this.y = canvas.height - 50; // 下から湧いてくる
-        this.type = type;
-        
-        // 種類によってスピードや挙動を変える
-        let speedMult = 1.0;
-        if (type === 'dash') speedMult = 1.8;
-        if (type === 'manager') speedMult = 0.6;
-
-        this.vx = (Math.random() - 0.5) * 3.0 * speedMult;
-        this.vy = -(Math.random() * 2.0 + 1.0) * speedMult; 
-        
-        this.hp = (type === 'manager') ? 2 : 1; // 中間管理職は2回ぶつかる必要がある
-        this.isStamped = false;
-        this.stampScale = 0;
-
-        this.img = new Image();
-        this.imgLoaded = false;
-        this.imgError = false;
-        this.img.onload = () => { this.imgLoaded = true; };
-        this.img.onerror = () => { this.imgError = true; };
-        this.img.src = 'assets/images/employee.png';
-    }
-
-    update() {
-        if (!this.isStamped) {
-            this.x += this.vx;
-            this.y += this.vy;
-            if (this.x - this.radius < 0 || this.x + this.radius > canvas.width) {
-                this.vx = -this.vx;
-            }
-        } else {
-            if (this.stampScale < 1) this.stampScale += 0.2;
-        }
-    }
-
-    draw() {
-        ctx.save();
-        if (this.imgLoaded && !this.imgError && this.type === 'normal') {
-            ctx.drawImage(this.img, this.x - this.radius, this.y - this.radius, this.radius * 2, this.radius * 2);
-        } else {
-            // フォールバック（種類によって色を変える）
-            ctx.fillStyle = this.type === 'dash' ? '#f59e0b' : (this.type === 'manager' ? '#64748b' : '#3b82f6');
-            ctx.beginPath();
-            ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.fillStyle = '#ffffff';
-            ctx.font = 'bold 10px sans-serif';
-            ctx.textAlign = 'center';
-            let label = '社員';
-            if (this.type === 'dash') label = '急ぎ';
-            if (this.type === 'manager') label = `管理(${this.hp})`;
-            ctx.fillText(label, this.x, this.y + 3);
-        }
-
-        if (this.isStamped) {
-            ctx.globalAlpha = Math.min(this.stampScale, 1.0);
-            ctx.strokeStyle = '#ef4444';
-            ctx.fillStyle = 'rgba(239, 68, 68, 0.2)';
-            ctx.lineWidth = 4;
-            ctx.beginPath();
-            ctx.arc(this.x, this.y, this.radius * 1.5 * this.stampScale, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.stroke();
-            ctx.fillStyle = '#ef4444';
-            ctx.font = '900 18px sans-serif';
-            ctx.textAlign = 'center';
-            ctx.fillText('残業', this.x, this.y + 6);
-        }
-        ctx.restore();
-    }
-}
-
-class Desk {
-    constructor(x, y, w, h) {
-        this.x = x;
-        this.y = y;
-        this.width = w;
-        this.height = h;
-    }
-
-    draw() {
-        ctx.save();
-        ctx.fillStyle = '#475569';
-        ctx.strokeStyle = '#94a3b8';
-        ctx.lineWidth = 2;
-        
-        // 丸角描画（クラッシュ回避版）
-        const r = 4;
-        ctx.beginPath();
-        ctx.moveTo(this.x + r, this.y);
-        ctx.lineTo(this.x + this.width - r, this.y);
-        ctx.arcTo(this.x + this.width, this.y, this.x + this.width, this.y + r, r);
-        ctx.lineTo(this.x + this.width, this.y + this.height - r);
-        ctx.arcTo(this.x + this.width, this.y + this.height, this.x + this.width - r, this.y + this.height, r);
-        ctx.lineTo(this.x + r, this.y + this.height);
-        ctx.arcTo(this.x, this.y + this.height, this.x, this.y + this.height - r, r);
-        ctx.lineTo(this.x, this.y + r);
-        ctx.arcTo(this.x, this.y, this.x + r, this.y, r);
-        ctx.closePath();
-        
-        ctx.fill();
-        ctx.stroke();
-        ctx.restore();
-    }
-}
-
-// ==================== ゲーム管理システム ====================
+// ==================== ゲーム・物理エンジン管理 ====================
 
 const gameState = {
     running: false,
-    boss: null,
-    employees: [],
-    desks: [],
-    particles: [],
-    stampedCount: 0,
-    escapedCount: 0,
-    currentCombo: 0,
-    dragStart: { x: 0, y: 0 },
-    dragCurrent: { x: 0, y: 0 },
-    isDragging: false,
-    startTime: null,
-    totalSeconds: 0,
+    engine: null,
+    world: null,
+    runner: null,
+    mouseConstraint: null,
+    bossBody: null,
+    sling: null,
+    enemies: [],
+    shotsLeft: 3,
+    state: 'idle', // idle, flying, gameover
     doubleTapTimer: 0,
-    bombCount: 1 // 手榴弾の使用回数
+    bombUsed: false // 手榴弾は1発射につき1回
 };
 
-function initStage() {
-    gameState.boss = new Boss();
-    gameState.employees = [];
-    gameState.particles = [];
-    
-    // デスクを小さく、配置を左右に寄せて中央を広く空ける！
-    gameState.desks = [
-        new Desk(20, 200, 60, 30),
-        new Desk(canvas.width - 80, 200, 60, 30),
-        new Desk(canvas.width / 2 - 30, 400, 60, 30),
-        new Desk(20, 550, 60, 30),
-        new Desk(canvas.width - 80, 550, 60, 30)
-    ];
+// ステージの塔を構築する
+function buildStage(cx, cy) {
+    const blockOpts = { label: 'block', friction: 0.5, restitution: 0.1, density: 0.005 };
+    const empOpts = { label: 'employee', restitution: 0.4, friction: 0.5, density: 0.002 };
 
-    for (let i = 0; i < 5; i++) {
-        gameState.employees.push(new Employee());
-    }
-
-    gameState.stampedCount = 0;
-    gameState.escapedCount = 0;
-    gameState.currentCombo = 0;
-    gameState.bombCount = 1; // 1ゲーム1回は手榴弾を使える
-    gameState.startTime = Date.now();
-    gameState.totalSeconds = 0;
-
-    document.getElementById('stamped-count').innerText = '0';
-    document.getElementById('escaped-count').innerText = '0';
-    document.getElementById('game-clock').innerText = '17:00';
-}
-
-// パーティクル発生関数
-function spawnParticles(x, y, count) {
-    const colors = ['#ffffff', '#cbd5e1', '#ef4444']; // 書類と血飛沫の色
-    for(let i=0; i<count; i++){
-        gameState.particles.push(new Particle(x, y, colors[Math.floor(Math.random() * colors.length)]));
-    }
-}
-
-function updateGame() {
-    if (!gameState.running) return;
-
-    // カメラ揺れの更新
-    if (camera.shakeTime > 0) {
-        camera.shakeTime--;
-        camera.x = (Math.random() - 0.5) * camera.shakeIntensity;
-        camera.y = (Math.random() - 0.5) * camera.shakeIntensity;
-    } else {
-        camera.x = 0;
-        camera.y = 0;
-    }
-
-    gameState.boss.update();
-
-    if(typeof Physics !== 'undefined') {
-        // 壁にぶつかったら音を鳴らす
-        if (Physics.checkWallCollision(gameState.boss, canvas.width, canvas.height)) {
-            if (audio) audio.playBounce();
-        }
+    // 書類の束（ブロック）と社員（敵）をピラミッド状に積む
+    Composite.add(gameState.world, [
+        Bodies.rectangle(cx - 50, cy, 20, 50, blockOpts),
+        Bodies.rectangle(cx + 50, cy, 20, 50, blockOpts),
+        Bodies.rectangle(cx, cy - 35, 140, 15, blockOpts), // 板
         
-        gameState.desks.forEach(desk => {
-            if (Physics.resolveObstacleCollision(gameState.boss, desk)) {
-                if (audio) audio.playBounce();
-            }
-        });
+        Bodies.rectangle(cx - 30, cy - 70, 20, 50, blockOpts),
+        Bodies.rectangle(cx + 30, cy - 70, 20, 50, blockOpts),
+        Bodies.rectangle(cx, cy - 105, 100, 15, blockOpts), // 板
+        
+        Bodies.rectangle(cx, cy - 140, 20, 50, blockOpts)
+    ]);
+
+    // 社員を各階層に配置
+    const e1 = Bodies.circle(cx, cy + 10, 18, empOpts);
+    const e2 = Bodies.circle(cx, cy - 60, 18, empOpts);
+    const e3 = Bodies.circle(cx, cy - 130, 18, empOpts);
+    
+    gameState.enemies.push(e1, e2, e3);
+    Composite.add(gameState.world, [e1, e2, e3]);
+}
+
+function initMatter() {
+    if (gameState.engine) {
+        Runner.stop(gameState.runner);
+        Engine.clear(gameState.engine);
     }
+    
+    gameState.engine = Engine.create();
+    gameState.world = gameState.engine.world;
+    gameState.engine.gravity.y = 1.2; // アングリーバード風の少し強めの重力
 
-    // 敵の無限補充ロジック（時間が経つほど最大数が増える）
-    const maxEnemies = Math.min(10, 5 + Math.floor(gameState.totalSeconds / 10));
-    if (gameState.employees.length < maxEnemies && Math.random() < 0.08) {
-        let type = 'normal';
-        if (gameState.totalSeconds > 15 && Math.random() < 0.3) type = 'dash';
-        if (gameState.totalSeconds > 30 && Math.random() < 0.2) type = 'manager';
-        gameState.employees.push(new Employee(type));
-    }
+    const w = 450;
+    const h = 800;
 
-    for (let i = gameState.employees.length - 1; i >= 0; i--) {
-        const emp = gameState.employees[i];
-        emp.update();
+    // 床・壁・天井（見えない壁）
+    const wallOpts = { isStatic: true, render: { visible: false } };
+    Composite.add(gameState.world, [
+        Bodies.rectangle(w/2, h + 25, w + 100, 50, wallOpts), // 床
+        Bodies.rectangle(-25, h/2, 50, h * 2, wallOpts),      // 左壁
+        Bodies.rectangle(w + 25, h/2, 50, h * 2, wallOpts),   // 右壁
+        Bodies.rectangle(w/2, -500, w * 2, 50, wallOpts)      // 天井
+    ]);
 
-        if (!emp.isStamped && emp.y - emp.radius < 50) {
-            gameState.escapedCount++;
-            document.getElementById('escaped-count').innerText = gameState.escapedCount;
-            gameState.employees.splice(i, 1);
-            if (gameState.escapedCount >= 5) {
-                endGame(false);
-            }
-            continue;
-        }
+    // 空中の足場（デスク）
+    Composite.add(gameState.world, [
+        Bodies.rectangle(w/2, 350, 200, 20, { isStatic: true, label: 'desk' }), // 中央の棚
+        Bodies.rectangle(80, 550, 150, 20, { isStatic: true, label: 'desk' }),  // 左の棚
+        Bodies.rectangle(w - 80, 200, 150, 20, { isStatic: true, label: 'desk' }) // 右の棚
+    ]);
 
-        // 体当たり（決裁）判定
-        if (typeof Physics !== 'undefined' && !emp.isStamped && Physics.checkCircleCollision(gameState.boss, emp)) {
-            // 反射させる（爽快感のため少しだけ）
-            const dx = gameState.boss.x - emp.x;
-            const dy = gameState.boss.y - emp.y;
-            const angle = Math.atan2(dy, dx);
-            gameState.boss.vx += Math.cos(angle) * 2;
-            gameState.boss.vy += Math.sin(angle) * 2;
+    // 足場の上に塔を建てる
+    buildStage(w/2, 320);
+    buildStage(80, 520);
 
-            emp.hp--;
-            if (emp.hp <= 0) {
-                emp.isStamped = true;
-                gameState.stampedCount++;
-                gameState.currentCombo++;
-                document.getElementById('stamped-count').innerText = gameState.stampedCount;
+    // マウスコントロール（スリングショット用）
+    const mouse = Mouse.create(canvas);
+    // スケール対応：画面のCSSサイズとCanvasの論理サイズ(450x800)のズレを補正
+    const container = document.getElementById('game-container');
+    const scaleX = 450 / container.clientWidth;
+    const scaleY = 800 / container.clientHeight;
+    Mouse.setScale(mouse, { x: scaleX, y: scaleY });
+
+    gameState.mouseConstraint = MouseConstraint.create(gameState.engine, {
+        mouse: mouse,
+        constraint: { stiffness: 0.1, render: { visible: false } }
+    });
+    Composite.add(gameState.world, gameState.mouseConstraint);
+
+    // 引っ張って離した時のイベント（発射！）
+    Events.on(gameState.mouseConstraint, 'enddrag', function(e) {
+        if (gameState.sling && gameState.sling.bodyB === gameState.bossBody) {
+            const dist = Vector.magnitude(Vector.sub(gameState.bossBody.position, gameState.sling.pointA));
+            if (dist > 20) { // 一定以上引っ張られていたら発射
+                gameState.sling.bodyB = null; 
+                gameState.state = 'flying';
+                if(typeof audio !== 'undefined' && audio) audio.playShoot();
                 
-                if(audio) audio.playStamp(gameState.currentCombo);
-                shakeScreen(5 + Math.min(gameState.currentCombo, 10), 10); // コンボで揺れが激しくなる
-                spawnParticles(emp.x, emp.y, 15); // 紙吹雪が飛ぶ
-
+                gameState.shotsLeft--;
+                document.getElementById('shots-count').innerText = gameState.shotsLeft;
+                
+                // 4秒後に次の弾（局長）を装填するか、ゲーム終了判定
                 setTimeout(() => {
-                    if (gameState.running) {
-                        gameState.employees = gameState.employees.filter(e => e !== emp);
+                    if (gameState.enemies.length > 0 && gameState.shotsLeft > 0) {
+                        loadBoss();
+                    } else if (gameState.enemies.length > 0 && gameState.shotsLeft <= 0) {
+                        endGame(false); // 弾切れ
                     }
-                }, 600);
-            } else {
-                if(audio) audio.playBounce(); // 硬い敵に弾かれた音
+                }, 4000);
             }
         }
-    }
+    });
 
-    // パーティクルの更新
-    for (let i = gameState.particles.length - 1; i >= 0; i--) {
-        const p = gameState.particles[i];
-        p.update();
-        if (p.life <= 0) gameState.particles.splice(i, 1);
-    }
+    // 衝突時のダメージ判定（敵を倒す）
+    Events.on(gameState.engine, 'collisionStart', function(event) {
+        const pairs = event.pairs;
+        for (let i = 0; i < pairs.length; i++) {
+            const bodyA = pairs[i].bodyA;
+            const bodyB = pairs[i].bodyB;
 
-    const elapsed = Math.floor((Date.now() - gameState.startTime) / 1000);
-    if (elapsed !== gameState.totalSeconds) {
-        gameState.totalSeconds = elapsed;
-        const currentMinutes = elapsed % 60;
-        const padMinutes = String(currentMinutes).padStart(2, '0');
-        document.getElementById('game-clock').innerText = `17:${padMinutes}`;
+            // 相対的な衝撃の強さを簡易計算
+            const relVel = Vector.magnitude(Vector.sub(bodyA.velocity, bodyB.velocity));
 
-        if (gameState.totalSeconds >= 60) endGame(true);
-    }
+            if (relVel > 2 && typeof audio !== 'undefined' && audio) {
+                audio.playBounce(); // ぶつかる音
+            }
 
-    if (gameState.doubleTapTimer > 0) gameState.doubleTapTimer -= 16.67;
-}
-
-function drawGame() {
-    // カメラの揺れを適用
-    ctx.save();
-    ctx.translate(camera.x, camera.y);
-
-    ctx.fillStyle = '#1e293b';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    
-    ctx.strokeStyle = '#334155';
-    ctx.lineWidth = 1;
-    for (let x = 0; x < canvas.width; x += 40) {
-        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke();
-    }
-    for (let y = 0; y < canvas.height; y += 40) {
-        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
-    }
-
-    ctx.fillStyle = '#0f172a';
-    ctx.fillRect(0, 0, canvas.width, 50);
-    ctx.strokeStyle = '#ef4444';
-    ctx.lineWidth = 4;
-    ctx.beginPath(); ctx.moveTo(0, 50); ctx.lineTo(canvas.width, 50); ctx.stroke();
-    ctx.fillStyle = '#ef4444';
-    ctx.font = 'bold 12px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText('↓↓↓ 定時退社口 (エレベーター) ↓↓↓', canvas.width / 2, 32);
-
-    gameState.desks.forEach(desk => desk.draw());
-    gameState.particles.forEach(p => p.draw());
-    gameState.employees.forEach(emp => emp.draw());
-    if(gameState.boss) gameState.boss.draw();
-
-    if (gameState.isDragging && gameState.boss && !gameState.boss.isMoving) {
-        const dx = gameState.dragStart.x - gameState.dragCurrent.x;
-        const dy = gameState.dragStart.y - gameState.dragCurrent.y;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-
-        if (dist > 10) {
-            const maxDrag = 150;
-            const powerRatio = Math.min(dist / maxDrag, 1.0);
-            
-            ctx.save();
-            ctx.lineWidth = 4;
-            const endX = gameState.boss.x + (dx * 1.5);
-            const endY = gameState.boss.y + (dy * 1.5);
-
-            const r = Math.floor(255 * powerRatio);
-            const g = Math.floor(255 * (1 - powerRatio));
-            ctx.strokeStyle = `rgb(${r}, ${g}, 0)`;
-            ctx.setLineDash([8, 6]);
-
-            ctx.beginPath();
-            ctx.moveTo(gameState.boss.x, gameState.boss.y);
-            ctx.lineTo(endX, endY);
-            ctx.stroke();
-
-            ctx.restore();
+            // 一定以上の衝撃が社員に加わったら撃破！
+            if (bodyA.label === 'employee' && relVel > 4) killEnemy(bodyA);
+            if (bodyB.label === 'employee' && relVel > 4) killEnemy(bodyB);
         }
-    }
+    });
 
-    ctx.restore(); // カメラ揺れリセット
+    gameState.runner = Runner.create();
+    Runner.run(gameState.runner, gameState.engine);
 }
 
-function gameLoop() {
-    updateGame();
-    drawGame();
-    if (gameState.running) {
-        requestAnimationFrame(gameLoop);
+// 局長（弾）をパチンコにセットする
+function loadBoss() {
+    if (gameState.bossBody) {
+        Composite.remove(gameState.world, gameState.bossBody);
     }
+    const anchor = { x: 450 / 2, y: 700 }; // 画面下部中央
+    
+    gameState.bossBody = Bodies.circle(anchor.x, anchor.y, 22, { 
+        label: 'boss', 
+        restitution: 0.6, // よく弾む
+        density: 0.05     // 重くして破壊力アップ
+    });
+    
+    if (!gameState.sling) {
+        gameState.sling = Constraint.create({
+            pointA: anchor,
+            bodyB: gameState.bossBody,
+            stiffness: 0.03, // ゴムの伸びやすさ
+            damping: 0.01,
+            length: 10
+        });
+        Composite.add(gameState.world, gameState.sling);
+    } else {
+        gameState.sling.bodyB = gameState.bossBody;
+    }
+    
+    Composite.add(gameState.world, gameState.bossBody);
+    gameState.state = 'idle';
+    gameState.bombUsed = false;
 }
 
-function setupInput() {
-    const getPos = (e) => {
-        const rect = canvas.getBoundingClientRect();
-        const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-        const clientY = e.touches ? e.touches[0].clientY : e.clientY;
-        return { x: clientX - rect.left, y: clientY - rect.top };
-    };
-
-    const onStart = (e) => {
-        if (!gameState.running || !gameState.boss || gameState.boss.isMoving) return;
-        const pos = getPos(e);
+// 敵を倒した時の処理
+function killEnemy(body) {
+    if (gameState.enemies.includes(body)) {
+        gameState.enemies = gameState.enemies.filter(e => e !== body);
+        Composite.remove(gameState.world, body);
         
-        if (gameState.doubleTapTimer > 0) {
-            if(gameState.bombCount > 0) {
-                triggerBomb();
-                gameState.bombCount--;
-            }
-            gameState.doubleTapTimer = 0;
-            return;
+        spawnParticles(body.position.x, body.position.y, 20);
+        shakeScreen(8, 10);
+        if(typeof audio !== 'undefined' && audio) audio.playStamp(5 - gameState.enemies.length);
+        
+        document.getElementById('escaped-count').innerText = gameState.enemies.length;
+
+        // 敵が全滅したらクリア！
+        if (gameState.enemies.length <= 0) {
+            setTimeout(() => endGame(true), 1500);
         }
-        gameState.doubleTapTimer = 250;
-
-        gameState.dragStart = pos;
-        gameState.dragCurrent = pos;
-        gameState.isDragging = true;
-    };
-
-    const onMove = (e) => {
-        if (!gameState.isDragging) return;
-        gameState.dragCurrent = getPos(e);
-    };
-
-    const onEnd = () => {
-        if (!gameState.isDragging) return;
-        gameState.isDragging = false;
-
-        const dx = gameState.dragStart.x - gameState.dragCurrent.x;
-        const dy = gameState.dragStart.y - gameState.dragCurrent.y;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-
-        if (dist > 15) {
-            const maxDrag = 150;
-            const power = Math.min(dist / maxDrag, 1.0) * 30; // 射出速度アップ！
-            const angle = Math.atan2(dy, dx);
-
-            gameState.boss.vx = Math.cos(angle) * power;
-            gameState.boss.vy = Math.sin(angle) * power;
-            gameState.boss.isMoving = true;
-
-            if(audio) audio.playShoot(); // 射出音
-        }
-    };
-
-    canvas.addEventListener('touchstart', (e) => { e.preventDefault(); onStart(e); }, { passive: false });
-    canvas.addEventListener('touchmove', (e) => { e.preventDefault(); onMove(e); }, { passive: false });
-    canvas.addEventListener('touchend', (e) => { e.preventDefault(); onEnd(); }, { passive: false });
-    canvas.addEventListener('mousedown', onStart);
-    canvas.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onEnd);
+    }
 }
 
+// 手榴弾ボム（ダブルタップで物理爆発）
 function triggerBomb() {
-    if(audio) audio.playBomb();
-    shakeScreen(20, 20); // 大揺れ
+    if (gameState.state !== 'flying' || gameState.bombUsed || !gameState.bossBody) return;
+    gameState.bombUsed = true;
     
-    gameState.employees.forEach(emp => {
-        if (!emp.isStamped) {
-            emp.isStamped = true;
-            gameState.stampedCount++;
-            document.getElementById('stamped-count').innerText = gameState.stampedCount;
-            spawnParticles(emp.x, emp.y, 20);
+    if(typeof audio !== 'undefined' && audio) audio.playBomb();
+    shakeScreen(20, 20); 
+    spawnParticles(gameState.bossBody.position.x, gameState.bossBody.position.y, 40);
+    
+    // 局長の周囲のBodyに爆発の力（衝撃波）を加える
+    const allBodies = Composite.allBodies(gameState.world);
+    allBodies.forEach(b => {
+        if (b.isStatic || b === gameState.bossBody) return;
+        const dx = b.position.x - gameState.bossBody.position.x;
+        const dy = b.position.y - gameState.bossBody.position.y;
+        const dist = Math.sqrt(dx*dx + dy*dy);
+        if (dist < 180) { // 爆発の及ぶ範囲
+            const forceMag = 0.1 * (180 - dist) / 180; // 近いほど強い
+            Matter.Body.applyForce(b, b.position, { x: (dx/dist)*forceMag, y: (dy/dist)*forceMag });
+            
+            // 敵が爆風に巻き込まれたら撃破
+            if (b.label === 'employee') killEnemy(b);
         }
     });
 
@@ -555,6 +264,147 @@ function triggerBomb() {
     canvas.style.backgroundColor = '#ffffff';
     setTimeout(() => { canvas.style.backgroundColor = originalBg; }, 100);
 }
+
+// ==================== 描画ループ ====================
+
+function drawGame() {
+    ctx.save();
+    
+    // カメラ揺れ
+    if (camera.shakeTime > 0) {
+        camera.shakeTime--;
+        camera.x = (Math.random() - 0.5) * camera.shakeIntensity;
+        camera.y = (Math.random() - 0.5) * camera.shakeIntensity;
+        ctx.translate(camera.x, camera.y);
+    }
+
+    // 背景
+    ctx.fillStyle = '#1e293b';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    if (!gameState.world) { ctx.restore(); return; }
+
+    // スリングショットのゴム（後ろ側）描画
+    if (gameState.sling && gameState.sling.bodyB) {
+        ctx.beginPath();
+        ctx.moveTo(gameState.sling.pointA.x - 20, gameState.sling.pointA.y);
+        ctx.lineTo(gameState.bossBody.position.x, gameState.bossBody.position.y);
+        ctx.strokeStyle = '#334155';
+        ctx.lineWidth = 6;
+        ctx.stroke();
+    }
+
+    // Matter.js の全Bodyを描画にマッピング
+    const bodies = Composite.allBodies(gameState.world);
+    bodies.forEach(body => {
+        ctx.save();
+        ctx.translate(body.position.x, body.position.y);
+        ctx.rotate(body.angle);
+
+        if (body.label === 'boss') {
+            if (bossImgLoaded) {
+                ctx.drawImage(bossImg, -body.circleRadius, -body.circleRadius, body.circleRadius*2, body.circleRadius*2);
+            } else {
+                ctx.fillStyle = '#ef4444';
+                ctx.beginPath(); ctx.arc(0,0,body.circleRadius,0,Math.PI*2); ctx.fill();
+            }
+            // ボムが使える時はオーラをまとう
+            if (gameState.state === 'flying' && !gameState.bombUsed) {
+                ctx.strokeStyle = 'rgba(250, 204, 21, 0.6)';
+                ctx.lineWidth = 4;
+                ctx.beginPath(); ctx.arc(0,0,body.circleRadius + 5 + Math.sin(Date.now()/50)*3, 0, Math.PI*2); ctx.stroke();
+            }
+        } 
+        else if (body.label === 'employee') {
+            if (empImgLoaded) {
+                ctx.drawImage(empImg, -body.circleRadius, -body.circleRadius, body.circleRadius*2, body.circleRadius*2);
+            } else {
+                ctx.fillStyle = '#3b82f6';
+                ctx.beginPath(); ctx.arc(0,0,body.circleRadius,0,Math.PI*2); ctx.fill();
+            }
+        }
+        else if (body.label === 'block') {
+            const w = body.bounds.max.x - body.bounds.min.x;
+            const h = body.bounds.max.y - body.bounds.min.y;
+            ctx.fillStyle = '#cbd5e1';
+            ctx.strokeStyle = '#64748b';
+            ctx.lineWidth = 2;
+            ctx.fillRect(-w/2, -h/2, w, h);
+            ctx.strokeRect(-w/2, -h/2, w, h);
+            // 書類っぽい線
+            ctx.beginPath(); ctx.moveTo(-w/3, -h/4); ctx.lineTo(w/3, -h/4); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(-w/3, 0); ctx.lineTo(w/3, 0); ctx.stroke();
+        }
+        else if (body.label === 'desk') {
+            const w = body.bounds.max.x - body.bounds.min.x;
+            const h = body.bounds.max.y - body.bounds.min.y;
+            ctx.fillStyle = '#475569';
+            ctx.fillRect(-w/2, -h/2, w, h);
+            ctx.fillStyle = '#94a3b8';
+            ctx.fillRect(-w/2, -h/2, w, 4); // デスクのフチ
+        }
+        ctx.restore();
+    });
+
+    // スリングショットのゴム（前側）描画
+    if (gameState.sling && gameState.sling.bodyB) {
+        ctx.beginPath();
+        ctx.moveTo(gameState.bossBody.position.x, gameState.bossBody.position.y);
+        ctx.lineTo(gameState.sling.pointA.x + 20, gameState.sling.pointA.y);
+        ctx.strokeStyle = '#ef4444';
+        ctx.lineWidth = 4;
+        ctx.stroke();
+    }
+
+    // パーティクルの更新と描画
+    for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i];
+        p.update();
+        p.draw();
+        if (p.life <= 0) particles.splice(i, 1);
+    }
+
+    ctx.restore(); // カメラ揺れリセット
+}
+
+function gameLoop() {
+    drawGame();
+    if (gameState.running) {
+        requestAnimationFrame(gameLoop);
+    }
+}
+
+// ダブルタップの検知
+let isInputSetup = false;
+function setupInput() {
+    if (isInputSetup) return;
+    isInputSetup = true;
+
+    const onStart = (e) => {
+        if (!gameState.running) return;
+        
+        // 空中飛行中のダブルタップで手榴弾発動
+        if (gameState.state === 'flying' && !gameState.bombUsed) {
+            if (gameState.doubleTapTimer > 0) {
+                triggerBomb();
+                gameState.doubleTapTimer = 0;
+            } else {
+                gameState.doubleTapTimer = 300; // 300ms以内に2回目でボム
+            }
+        }
+    };
+
+    // スマホタッチとマウスクリックの両方でボム発動を拾う
+    canvas.addEventListener('touchstart', (e) => { onStart(e); }, { passive: false });
+    canvas.addEventListener('mousedown', onStart);
+    
+    // タイマー減衰ループ
+    setInterval(() => {
+        if(gameState.doubleTapTimer > 0) gameState.doubleTapTimer -= 50;
+    }, 50);
+}
+
+// ==================== ゲーム進行制御 ====================
 
 function startGame() {
     if(typeof audio !== 'undefined') {
@@ -565,14 +415,25 @@ function startGame() {
     document.getElementById('result-screen').classList.add('hidden');
     document.getElementById('play-ui').classList.remove('hidden');
 
-    gameState.running = true;
-    initStage();
+    gameState.enemies = [];
+    gameState.shotsLeft = 3;
+    document.getElementById('shots-count').innerText = gameState.shotsLeft;
+    
+    initMatter();
+    loadBoss();
     setupInput();
-    gameLoop();
+    
+    if (!gameState.running) {
+        gameState.running = true;
+        gameLoop();
+    }
 }
 
 function endGame(isClear) {
+    if (!gameState.running) return;
     gameState.running = false;
+    
+    if (gameState.runner) Runner.stop(gameState.runner);
     if(typeof audio !== 'undefined') audio.stopBGM();
 
     document.getElementById('play-ui').classList.add('hidden');
@@ -581,26 +442,25 @@ function endGame(isClear) {
 
     const title = document.getElementById('result-title');
     const desc = document.getElementById('result-desc');
-    const finalScore = document.getElementById('final-score');
-
-    finalScore.innerText = gameState.stampedCount;
 
     if (isClear) {
-        title.innerText = "残業成功！";
+        title.innerText = "残業取締 完了！";
         title.className = "text-4xl font-black text-yellow-400 mb-2 tracking-widest animate-bounce";
-        desc.innerText = "お見事！ 局長（あなた）の威圧感によって、18:00までの退社ラッシュを完全に阻止した。サービス残業の開始だッ！";
+        desc.innerText = "見事だ！ 物理法則をもねじ伏せ、全ての社員を定時退社から引き戻したぞ！";
     } else {
-        title.innerText = "定時退社発生";
+        title.innerText = "定時退社 発生";
         title.className = "text-4xl font-black text-red-500 mb-2 tracking-widest";
-        desc.innerText = "平社員どもが定時にオフィスを脱出し、家に帰ってしまった。 労働基準法を許した局長は始末書ものだ！";
+        desc.innerText = "弾（局長）が尽きてしまった。社員どもは全員家に帰ってしまったぞ。始末書だ！";
     }
 }
 
-initStage();
-drawGame();
-
+// ボタンイベントの登録
 document.getElementById('start-btn').addEventListener('click', startGame);
 document.getElementById('restart-btn').addEventListener('click', () => {
     document.getElementById('result-screen').classList.add('hidden');
-    document.getElementById('start-screen').classList.remove('hidden');
+    startGame(); // そのまま再出社
 });
+
+// タイトル画面用の初回描画
+ctx.fillStyle = '#1e293b';
+ctx.fillRect(0, 0, canvas.width, canvas.height);
