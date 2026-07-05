@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>絶望の上下水道局 ～ワンマン局長の引っ張り決裁アクション～</title>
+    <link rel="stylesheet" href="css/style.css">
+    <!-- Tailwind CSS (オンラインCDN) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-900 flex justify-center items-center h-screen overflow-hidden select-none">
+
+    <!-- ゲーム外枠コンテナ (アスペクト比 9:16固定) -->
+    <div id="game-container" class="relative w-full max-w-[450px] h-full max-h-[800px] bg-slate-800 shadow-2xl overflow-hidden border-4 border-slate-700">
+        
+        <!-- ゲーム描画用Canvas -->
+        <canvas id="gameCanvas" class="absolute top-0 left-0 w-full h-full block"></canvas>
+
+        <!-- UIレイヤー: 開始画面 -->
+        <div id="start-screen" class="absolute inset-0 flex flex-col justify-between items-center bg-slate-950 bg-opacity-90 p-6 text-white z-20">
+            <div class="text-center mt-12">
+                <h1 class="text-2xl font-black tracking-wider text-red-500 mb-2">絶望の上下水道局</h1>
+                <p class="text-xs text-slate-400">～ワンマン局長の引っ張り決裁アクション～</p>
+            </div>
+
+            <!-- 局長ビジュアル（仮） -->
+            <div class="w-40 h-40 border-4 border-yellow-500 rounded-full flex items-center justify-center bg-slate-800 shadow-lg overflow-hidden my-4">
+                <span class="text-yellow-500 font-bold text-center text-sm px-2">威圧感が<br>安全装備やぞ！</span>
+            </div>
+
+            <div class="w-full text-center mb-12">
+                <p class="text-xs text-yellow-400 mb-6 animate-pulse">※音が出ます。画面をタップして開始しろ！</p>
+                <button id="start-btn" class="w-full py-4 bg-gradient-to-r from-red-600 to-yellow-600 hover:from-red-500 hover:to-yellow-500 text-lg font-black rounded-xl shadow-lg border-2 border-yellow-400 active:scale-95 transition">
+                    決裁を開始する（PLAY）
+                </button>
+            </div>
+        </div>
+
+        <!-- UIレイヤー: プレイ中のスコア・時計表示 -->
+        <div id="play-ui" class="absolute top-0 left-0 w-full p-4 flex justify-between items-center text-white font-bold text-sm pointer-events-none z-10 hidden">
+            <div class="bg-black bg-opacity-55 px-3 py-1.5 rounded-lg border border-slate-600">
+                残業拒否: <span id="escaped-count" class="text-red-500">0</span> / 5
+            </div>
+            <div class="bg-black bg-opacity-55 px-3 py-1.5 rounded-lg border border-slate-600 text-center">
+                <div class="text-xs text-slate-400">現在時刻</div>
+                <div id="game-clock" class="text-yellow-400 text-base">17:00</div>
+            </div>
+            <div class="bg-black bg-opacity-55 px-3 py-1.5 rounded-lg border border-slate-600">
+                決裁数: <span id="stamped-count" class="text-green-400">0</span>
+            </div>
+        </div>
+
+        <!-- UIレイヤー: リザルト画面 -->
+        <div id="result-screen" class="absolute inset-0 flex flex-col justify-center items-center bg-slate-950 bg-opacity-90 p-6 text-white z-20 hidden">
+            <h2 id="result-title" class="text-4xl font-black mb-2 tracking-widest"></h2>
+            <p id="result-desc" class="text-sm text-slate-300 text-center mb-8 px-4"></p>
+            <div class="bg-slate-800 p-4 rounded-xl border border-slate-600 w-full max-w-xs mb-8 text-center">
+                <p class="text-xs text-slate-400 mb-1">今回の総決裁（強制残業）数</p>
+                <p class="text-3xl font-black text-yellow-400"><span id="final-score">0</span>名</p>
+            </div>
+            <button id="restart-btn" class="w-full max-w-xs py-4 bg-slate-700 hover:bg-slate-600 text-lg font-bold rounded-xl shadow-md border border-slate-500 active:scale-95 transition">
+                始末書を書いて再出社
+            </button>
+        </div>
+
+    </div>
+
+    <!-- 各種ゲーム制御スクリプト -->
+    <script src="js/audio.js"></script>
+    <script src="js/physics.js"></script>
+    <script src="js/main.js"></script>
+</body>
+</html>
